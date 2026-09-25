@@ -2,10 +2,17 @@ import SwiftUI
 
 /// スロット画面のいちばん外側。背景・筐体・操作ボタン・演出レイヤーを重ねる。
 struct SlotMachineView: View {
-    @State private var game = SlotGame()
-    @State private var showSettings = false
+    let game: SlotGame
+    let onLeave: () -> Void
+    @State private var showInfo = false
+    @State private var showAchievements = false
     @State private var reelTouch = false
     @Environment(\.scenePhase) private var scenePhase
+
+    init(game: SlotGame, onLeave: @escaping () -> Void) {
+        self.game = game
+        self.onLeave = onLeave
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -15,12 +22,13 @@ struct SlotMachineView: View {
 
                 TimelineView(.animation) { timeline in
                     VStack(spacing: 10) {
-                        TopBar(game: game, showSettings: $showSettings)
+                        TopBar(game: game, showInfo: $showInfo, showAchievements: $showAchievements,
+                               onLeave: onLeave)
                         Spacer(minLength: 0)
                         CabinetView(game: game, now: timeline.date, width: width - 24)
                             .scaleEffect(game.zoom)
                             .saturation(game.desaturate ? 0.05 : 1)
-                            .onTouchDown(pressed: $reelTouch) { handleReelTap() }
+                            .onTouchDown(pressed: $reelTouch) { game.tapReels() }
                         Spacer(minLength: 0)
                         ControlPanel(game: game, now: timeline.date)
                     }
@@ -30,14 +38,16 @@ struct SlotMachineView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
-                // 静寂のときに画面を暗くする
+                // 静寂・フリーズのときに画面を暗くする
                 Color.black.opacity(game.dim)
                     .ignoresSafeArea()
-                    .allowsHitTesting(false)
+                    .allowsHitTesting(game.freezeActive)
 
                 ParticleLayer(system: game.particles)
                 FlashLayer(game: game)
                 SlamLayer(slam: game.slam)
+                    .allowsHitTesting(false)
+                ToastLayer(toast: game.toast)
                     .allowsHitTesting(false)
 
                 if game.phase == .awaitingPush {
@@ -48,21 +58,14 @@ struct SlotMachineView: View {
             .animation(.spring(response: 0.3, dampingFraction: 0.6), value: game.phase == .awaitingPush)
         }
         .ignoresSafeArea(.container, edges: .bottom)
-        .sheet(isPresented: $showSettings) {
-            SettingsView(game: game)
+        .sheet(isPresented: $showInfo) {
+            MachineInfoView(game: game)
+        }
+        .sheet(isPresented: $showAchievements) {
+            AchievementsView(player: game.player)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { game.appBecameActive() }
-        }
-    }
-
-    /// リールの上をタップ: 止まっていればレバー、回っていれば次のリールを止める
-    private func handleReelTap() {
-        switch game.phase {
-        case .idle: game.pullLever()
-        case .spinning: game.pressStop()
-        case .awaitingPush: game.tapPush()
-        case .buildUp, .presenting: break
         }
     }
 
@@ -83,40 +86,63 @@ struct SlotMachineView: View {
     }
 }
 
-// MARK: - 上の帯(クレジット・差枚・データ)
+// MARK: - 上の帯(台番号・クレジット・差枚・データ)
 
 private struct TopBar: View {
     let game: SlotGame
-    @Binding var showSettings: Bool
+    @Binding var showInfo: Bool
+    @Binding var showAchievements: Bool
+    let onLeave: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        let data = game.machineData
+        HStack(alignment: .center, spacing: 8) {
+            Button {
+                game.leave()
+                onLeave()
+            } label: {
+                VStack(spacing: 0) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("\(game.machineNumber)")
+                        .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                }
+                .foregroundStyle(.white.opacity(game.canLeave ? 0.85 : 0.25))
+                .frame(width: 40, height: 44)
+                .background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.1)))
+            }
+            .disabled(!game.canLeave)
+            .accessibilityLabel("席を立ってホールへ戻る")
+
             LEDCounter(label: "CREDIT", value: game.credits, color: .orange)
-            LEDCounter(label: "差枚", value: game.netMedals, color: game.netMedals >= 0 ? .green : .red,
-                       signed: true)
+            LEDCounter(label: "差枚", value: game.player.netMedals,
+                       color: game.player.netMedals >= 0 ? .green : .red, signed: true)
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(game.gamesSinceBonus)G")
+                Text("\(data.gamesSinceBonus)G")
                     .font(.system(size: 15, weight: .heavy, design: .monospaced))
                     .foregroundStyle(.white)
-                HStack(spacing: 6) {
-                    Text("BIG \(game.bigCount)").foregroundStyle(Color(red: 1, green: 0.35, blue: 0.35))
-                    Text("REG \(game.regCount)").foregroundStyle(Color(red: 0.45, green: 0.7, blue: 1))
+                HStack(spacing: 5) {
+                    Text("B\(data.bigCount)").foregroundStyle(Color(red: 1, green: 0.35, blue: 0.35))
+                    Text("R\(data.regCount)").foregroundStyle(Color(red: 0.45, green: 0.7, blue: 1))
                 }
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
             }
             Spacer(minLength: 0)
-            Button {
-                showSettings = true
-            } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.8))
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(.white.opacity(0.1)))
-            }
-            .accessibilityLabel("設定とデータ")
+            iconButton("trophy.fill", label: "実績") { showAchievements = true }
+            iconButton("chart.bar.fill", label: "台データと設定") { showInfo = true }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
+    }
+
+    private func iconButton(_ name: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.8))
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(.white.opacity(0.1)))
+        }
+        .accessibilityLabel(label)
     }
 }
 
@@ -133,14 +159,14 @@ struct LEDCounter: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(.white.opacity(0.55))
             Text(signed ? String(format: "%+ld", value) : String(format: "%04ld", value))
-                .font(.system(size: 20, weight: .black, design: .monospaced))
+                .font(.system(size: 18, weight: .black, design: .monospaced))
                 .monospacedDigit()
                 .foregroundStyle(color)
                 .shadow(color: color.opacity(0.9), radius: 6)
                 .contentTransition(.numericText(value: Double(value)))
                 .animation(.snappy(duration: 0.12), value: value)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 7)
         .padding(.vertical, 4)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.55)))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(color.opacity(0.35), lineWidth: 1))

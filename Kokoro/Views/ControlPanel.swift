@@ -20,7 +20,7 @@ struct ControlPanel: View {
                     Button {
                         game.refill()
                     } label: {
-                        Text("メダルを借りる +\(SlotGame.refillAmount)")
+                        Text("メダルを借りる +\(PlayerStore.refillAmount)")
                             .font(.system(size: 16, weight: .heavy))
                             .foregroundStyle(.black)
                             .frame(maxWidth: .infinity, minHeight: 64)

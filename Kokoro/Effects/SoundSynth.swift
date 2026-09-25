@@ -90,12 +90,13 @@ enum SoundSynth {
     // MARK: - 効果音
 
     /// レバーを叩いた音(ガコッ)
-    static func lever() -> [Float] {
+    /// pitch > 1 で少し高い(違和感用)
+    static func lever(pitch: Double = 1) -> [Float] {
         var o = silence(0.2)
         add(&o, at: 0, duration: 0.04, wave: .noise, amp: 0.6, freq: { _ in 0 }, env: decay(0.008, attack: 0))
         add(&o, at: 0, duration: 0.18, wave: .sine, amp: 0.95,
-            freq: { t in 100 - 45 * min(1, t / 0.1) }, env: decay(0.05))
-        add(&o, at: 0.005, duration: 0.015, wave: .square, amp: 0.15, freq: { _ in 2200 }, env: decay(0.004))
+            freq: { t in (100 - 45 * min(1, t / 0.1)) * pitch }, env: decay(0.05))
+        add(&o, at: 0.005, duration: 0.015, wave: .square, amp: 0.15, freq: { _ in 2200 * pitch }, env: decay(0.004))
         return finish(o)
     }
 
@@ -325,16 +326,34 @@ enum SoundSynth {
         return finish(o)
     }
 
+    /// 実績解除(キラリン)
+    static func achievement() -> [Float] {
+        var o = silence(0.9)
+        for (i, m) in [84.0, 88, 91, 96, 100].enumerated() {
+            let f = midi(m)
+            add(&o, at: Double(i) * 0.05, duration: 0.6, wave: .sine, amp: 0.22, freq: { _ in f }, env: decay(0.25))
+            add(&o, at: Double(i) * 0.05, duration: 0.3, wave: .triangle, amp: 0.1, freq: { _ in f * 2 },
+                env: decay(0.1))
+        }
+        return finish(o)
+    }
+
     // MARK: - BGM
 
     /// ボーナス中・RUSH 中にループする 8 小節(150BPM)。transpose は半音単位。
-    static func bgm(transpose: Double, intense: Bool) -> [Float] {
-        let eighth = 0.2
+    /// style: ハイテンポ = 188BPM、8bit = 主旋律も矩形波でビブラートなし、マイナー = Am, F, C, G 進行
+    static func bgm(transpose: Double, intense: Bool, style: BGMStyle = .standard) -> [Float] {
+        let eighth = style == .highTempo ? 0.16 : 0.2
         let barLength = eighth * 8
+        let noteLength = eighth * 0.95
         var o = silence(barLength * 8)
-        // C, Am, F, G を 2 回
-        let roots: [Double] = [48, 45, 41, 43, 48, 45, 41, 43]
-        let minor = [false, true, false, false, false, true, false, false]
+        // C, Am, F, G を 2 回(マイナーは Am, F, C, G)
+        let roots: [Double] = style == .minor ? [45, 41, 48, 43, 45, 41, 48, 43] : [48, 45, 41, 43, 48, 45, 41, 43]
+        let minor = style == .minor
+            ? [true, false, false, false, true, false, false, false]
+            : [false, true, false, false, false, true, false, false]
+        let leadWave: Wave = style == .eightBit ? .square : .saw
+        let vibrato = style == .eightBit ? 0.0 : 0.006
         let melody: [[Double]] = [
             [72, 76, 79, 84, 83, 79, 76, 79],
             [81, -1, 79, 76, 72, 76, 81, 84],
@@ -353,7 +372,7 @@ enum SoundSynth {
             // ベース: 8 分でルートとオクターブを交互に
             for i in 0..<8 {
                 let f = midi(root + (i % 2 == 0 ? 0 : 12))
-                add(&o, at: barStart + Double(i) * eighth, duration: 0.19, wave: .square, amp: 0.13, wrap: true,
+                add(&o, at: barStart + Double(i) * eighth, duration: noteLength, wave: .square, amp: 0.13, wrap: true,
                     freq: { _ in f }, env: decay(0.1, attack: 0.004))
             }
             // アルペジオ: 16 分で和音を上下
@@ -362,16 +381,17 @@ enum SoundSynth {
                 let k = arpOrder[i % 8]
                 let note = root + 24 + chord[k % 3] + Double(k / 3) * 12
                 let f = midi(note)
-                add(&o, at: barStart + Double(i) * eighth / 2, duration: 0.1, wave: .square,
+                add(&o, at: barStart + Double(i) * eighth / 2, duration: eighth / 2, wave: .square,
                     amp: intense ? 0.06 : 0.045, wrap: true, freq: { _ in f }, env: decay(0.04, attack: 0.002))
             }
             // 主旋律
             for (i, m) in melody[bar].enumerated() where m > 0 {
                 let f = midi(m + transpose)
-                add(&o, at: barStart + Double(i) * eighth, duration: 0.19, wave: .saw, amp: 0.1, wrap: true,
-                    freq: { t in f * (1 + 0.006 * sin(t * 2 * .pi * 6)) },
-                    env: adsr(attack: 0.005, decay: 0.05, sustain: 0.7, length: 0.15, release: 0.04))
-                add(&o, at: barStart + Double(i) * eighth, duration: 0.19, wave: .square, amp: 0.05, wrap: true,
+                add(&o, at: barStart + Double(i) * eighth, duration: noteLength, wave: leadWave,
+                    amp: style == .eightBit ? 0.07 : 0.1, wrap: true,
+                    freq: { t in f * (1 + vibrato * sin(t * 2 * .pi * 6)) },
+                    env: adsr(attack: 0.005, decay: 0.05, sustain: 0.7, length: noteLength - 0.04, release: 0.04))
+                add(&o, at: barStart + Double(i) * eighth, duration: noteLength, wave: .square, amp: 0.05, wrap: true,
                     freq: { _ in f * 2 }, env: decay(0.06))
             }
             // ドラム: キック(4 つ打ち) / スネア(2・4 拍) / ハイハット(裏)

@@ -13,6 +13,8 @@ final class HapticEngine {
     let supportsHaptics: Bool
     private var engine: CHHapticEngine?
     private var heartbeatPlayer: CHHapticAdvancedPatternPlayer?
+    /// タメの振動(スキップしたときに止めるため覚えておく)
+    private var buildUpPlayer: CHHapticPatternPlayer?
 
     private init() {
         supportsHaptics = CHHapticEngine.capabilitiesForHardware().supportsHaptics
@@ -73,21 +75,25 @@ final class HapticEngine {
                                relativeTime: time)
     }
 
-    private func play(_ events: [CHHapticEvent], curves: [CHHapticParameterCurve] = []) {
-        guard isEnabled, supportsHaptics else { return }
+    @discardableResult
+    private func play(_ events: [CHHapticEvent], curves: [CHHapticParameterCurve] = []) -> CHHapticPatternPlayer? {
+        guard isEnabled, supportsHaptics else { return nil }
         if engine == nil { makeEngine() }
-        guard let engine else { return }
+        guard let engine else { return nil }
         do {
             let pattern = try CHHapticPattern(events: events, parameterCurves: curves)
             let player = try engine.makePlayer(with: pattern)
             try player.start(atTime: CHHapticTimeImmediate)
+            return player
         } catch {
             // エンジンが止まっていたら起こしてもう 1 回だけ試す
             try? engine.start()
             if let pattern = try? CHHapticPattern(events: events, parameterCurves: curves),
                let player = try? engine.makePlayer(with: pattern) {
                 try? player.start(atTime: CHHapticTimeImmediate)
+                return player
             }
+            return nil
         }
     }
 
@@ -96,6 +102,17 @@ final class HapticEngine {
     /// レバー: ガツンと 1 発 + 短いうなり
     func lever() {
         play([tap(1, 0.75, at: 0), buzz(0.5, 0.2, at: 0.01, for: 0.07)])
+    }
+
+    /// 違和感: レバーの振動が「トトン」と一瞬ズレる
+    func leverStutter() {
+        play([tap(1, 0.75, at: 0), tap(0.55, 0.9, at: 0.085), buzz(0.5, 0.2, at: 0.01, for: 0.07)])
+    }
+
+    /// フリーズ: 重く低い 1 発(暗転の瞬間)
+    func freezeHit() {
+        play([tap(1, 0.05, at: 0), buzz(1, 0, at: 0, for: 0.6)],
+             curves: [curve(.hapticIntensityControl, [(0, 1), (0.6, 0)])])
     }
 
     /// リール停止: 硬く短く
@@ -129,7 +146,13 @@ final class HapticEngine {
         // 下に敷く連続振動も少しずつ大きく
         events.append(buzz(1, 0.2, at: 0, for: body))
         let rise = curve(.hapticIntensityControl, [(0, 0.08), (body * 0.5, 0.25), (body * 0.9, 0.7), (body, 0.9)])
-        play(events, curves: [rise])
+        buildUpPlayer = play(events, curves: [rise])
+    }
+
+    /// タメをスキップしたときに、流れているタメの振動を止める
+    func cancelBuildUp() {
+        try? buildUpPlayer?.stop(atTime: CHHapticTimeImmediate)
+        buildUpPlayer = nil
     }
 
     /// 色が 1 段上がったとき

@@ -69,6 +69,27 @@ struct BackgroundView: View {
                     .opacity(0.2 + 0.25 * strobe)
                     .blendMode(.plusLighter)
             }
+        case .superRush:
+            // 上位 RUSH: 虹の光線が速く回り、白い閃光が走る
+            let strobe = pow(max(0, sin(t * 2 * .pi * 3.2)), 10)
+            ZStack {
+                LinearGradient(colors: [Color(red: 0.25, green: 0, blue: 0.35), Color(red: 0.02, green: 0, blue: 0.12)],
+                               startPoint: .top, endPoint: .bottom)
+                RaysView(phase: t * 3, count: 20, colorful: true)
+                    .opacity(0.35 + 0.3 * strobe)
+                    .blendMode(.plusLighter)
+                Color.white.opacity(0.12 * strobe)
+            }
+        case .zone:
+            let pulse = 0.5 + 0.5 * sin(t * 3)
+            ZStack {
+                LinearGradient(colors: [Color(red: 0.35, green: 0.18, blue: 0), Color(red: 0.08, green: 0.02, blue: 0)],
+                               startPoint: .top, endPoint: .bottom)
+                RadialGradient(colors: [Color.orange.opacity(0.15 + 0.15 * pulse), .clear], center: .center,
+                               startRadius: 0, endRadius: 480)
+            }
+        case .freeze:
+            Color.black
         }
     }
 
@@ -285,6 +306,55 @@ private struct ChromaticText: View {
         .minimumScaleFactor(0.4)
         .lineLimit(1)
         .shadow(color: .white.opacity(0.5), radius: 16)
+    }
+}
+
+// MARK: - 実績解除のお知らせ
+
+struct ToastLayer: View {
+    let toast: AchievementToast?
+
+    var body: some View {
+        // SlamLayer と同じく、常に置いておいて id の変化でアニメーションさせる
+        let achievement = toast?.achievement ?? .spins1000
+        VStack {
+            HStack(spacing: 10) {
+                Image(systemName: "trophy.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(LinearGradient(colors: [.yellow, .orange], startPoint: .top, endPoint: .bottom))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("実績解除: \(achievement.title)")
+                        .font(.system(size: 14, weight: .heavy))
+                        .foregroundStyle(.white)
+                    if let reward = achievement.rewardText {
+                        Text("\(reward) が使えるようになりました")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.yellow)
+                    } else {
+                        Text(achievement.detail)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.85)))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.yellow.opacity(0.7), lineWidth: 1.5))
+            .padding(.horizontal, 16)
+            .keyframeAnimator(initialValue: -160.0, trigger: toast?.id ?? 0) { content, y in
+                content.offset(y: y)
+            } keyframes: { _ in
+                KeyframeTrack {
+                    SpringKeyframe(8, duration: 0.45, spring: .bouncy)
+                    LinearKeyframe(8, duration: 2.8)
+                    CubicKeyframe(-160, duration: 0.35)
+                }
+            }
+            Spacer()
+        }
+        .padding(.top, 4)
     }
 }
 

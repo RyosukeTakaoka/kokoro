@@ -11,9 +11,10 @@ struct CabinetView: View {
         VStack(spacing: 10) {
             TopPanel(game: game, now: now)
             ReelWindow(game: game, now: now, reelWidth: reelWidth)
-            ExpectGauge(color: game.aura, progress: game.buildUpProgress(at: now), now: now)
+            ExpectGauge(color: game.aura, progress: game.buildUpProgress(at: now), now: now,
+                        canSkip: game.canSkipBuildUp)
             HStack(alignment: .center) {
-                KokoroLamp(lit: game.lampLit, now: now)
+                KokoroLamp(lit: game.lampLit || game.lampFlicker, now: now)
                 Spacer()
                 PayoutDisplay(payout: game.lastPayout, freeGame: game.freeGame)
             }
@@ -22,10 +23,9 @@ struct CabinetView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 26)
-                .fill(LinearGradient(colors: [Color(white: 0.2), Color(white: 0.06), Color(white: 0.14)],
-                                     startPoint: .top, endPoint: .bottom))
+                .fill(LinearGradient(colors: theme.bodyColors, startPoint: .top, endPoint: .bottom))
         )
-        .overlay(ChaseLights(mood: game.mood, now: now).padding(3))
+        .overlay(ChaseLights(mood: game.mood, theme: theme, now: now).padding(3))
         .overlay(
             RoundedRectangle(cornerRadius: 26)
                 .stroke(LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.05), .white.opacity(0.3)],
@@ -35,13 +35,18 @@ struct CabinetView: View {
         .frame(width: width)
     }
 
+    private var theme: CabinetTheme { game.player.theme }
+
     private var moodGlow: Color {
         if let aura = game.aura { return aura.color }
         switch game.mood {
-        case .normal: return Color(red: 0.4, green: 0.2, blue: 0.9)
+        case .normal: return theme.chase.opacity(0.7)
+        case .zone: return .orange
         case .reach: return .red
         case .bonus: return .yellow
         case .rush: return Color(red: 1, green: 0.2, blue: 0.8)
+        case .superRush: return .white
+        case .freeze: return .clear
         }
     }
 }
@@ -58,14 +63,27 @@ private struct TopPanel: View {
             RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.65))
             switch game.mode {
             case .normal:
-                Text("KOKORO")
-                    .font(.system(size: 30, weight: .black, design: .rounded))
-                    .italic()
-                    .tracking(6)
-                    .foregroundStyle(LinearGradient(colors: [Color(red: 1, green: 0.5, blue: 0.75),
-                                                             Color(red: 0.7, green: 0.35, blue: 1)],
-                                                    startPoint: .leading, endPoint: .trailing))
-                    .shadow(color: Color(red: 1, green: 0.3, blue: 0.7).opacity(0.5 + 0.4 * sin(t * 2.2)), radius: 10)
+                if game.zoneGamesLeft > 0 {
+                    VStack(spacing: 2) {
+                        Text("CHANCE ZONE")
+                            .font(.system(size: 24, weight: .black, design: .rounded))
+                            .italic()
+                            .foregroundStyle(LinearGradient(colors: [.yellow, .orange], startPoint: .leading,
+                                                            endPoint: .trailing))
+                            .scaleEffect(1 + 0.03 * sin(t * 6))
+                        Text("残り \(game.zoneGamesLeft)G   ボーナス確率 2 倍")
+                            .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                            .foregroundStyle(.white)
+                    }
+                } else {
+                    Text("KOKORO")
+                        .font(.system(size: 30, weight: .black, design: .rounded))
+                        .italic()
+                        .tracking(6)
+                        .foregroundStyle(LinearGradient(colors: game.player.theme.logo,
+                                                        startPoint: .leading, endPoint: .trailing))
+                        .shadow(color: game.player.theme.chase.opacity(0.5 + 0.4 * sin(t * 2.2)), radius: 10)
+                }
             case .bonus(let kind, let left):
                 VStack(spacing: 2) {
                     Text(kind.title)
@@ -77,21 +95,38 @@ private struct TopPanel: View {
                         .foregroundStyle(.white)
                         .contentTransition(.numericText())
                 }
-            case .rush(let left):
+            case .rush(let left, let isSuper):
                 VStack(spacing: 2) {
-                    Text("KOKORO RUSH")
-                        .font(.system(size: 24, weight: .black, design: .rounded))
-                        .italic()
-                        .foregroundStyle(LinearGradient(colors: [Color(red: 1, green: 0.3, blue: 0.8), .yellow],
-                                                        startPoint: .leading, endPoint: .trailing))
-                        .scaleEffect(1 + 0.04 * sin(t * 8))
-                    Text("残り \(left)G   \(game.rushChain)連中   +\(game.rushTotal)枚")
-                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                    Group {
+                        if isSuper {
+                            Text("SUPER KOKORO RUSH")
+                                .foregroundStyle(RainbowFill.gradient(phase: t * 0.8))
+                        } else {
+                            Text("KOKORO RUSH")
+                                .foregroundStyle(LinearGradient(colors: [Color(red: 1, green: 0.3, blue: 0.8), .yellow],
+                                                                startPoint: .leading, endPoint: .trailing))
+                        }
+                    }
+                    .font(.system(size: isSuper ? 20 : 24, weight: .black, design: .rounded))
+                    .italic()
+                    .scaleEffect(1 + 0.04 * sin(t * (isSuper ? 12 : 8)))
+                    Text(rushLine(left: left))
+                        .font(.system(size: 12, weight: .heavy, design: .monospaced))
                         .foregroundStyle(.white)
+                        .minimumScaleFactor(0.6)
+                        .lineLimit(1)
                 }
             }
         }
         .frame(height: 64)
+    }
+
+    private func rushLine(left: Int) -> String {
+        var line = "残り \(left)G  \(game.rushChain)連中  +\(game.rushTotal)枚"
+        if let n = game.chainsToSuper {
+            line += n <= 1 ? "  あと1連でSUPER!" : "  SUPERまで\(n)連"
+        }
+        return line
     }
 }
 
@@ -126,6 +161,7 @@ private struct ReelWindow: View {
         }
         if i < 2 && game.reachActive { return .red }
         if game.mood == .bonus { return .yellow }
+        if game.mood == .superRush { return .white }
         return nil
     }
 }
@@ -216,6 +252,7 @@ private struct ExpectGauge: View {
     let color: ExpectColor?
     let progress: Double
     let now: Date
+    let canSkip: Bool
 
     var body: some View {
         let t = now.timeIntervalSinceReferenceDate
@@ -233,6 +270,14 @@ private struct ExpectGauge: View {
                         .foregroundStyle(.white)
                         .shadow(color: .black, radius: 2)
                         .padding(.leading, 10)
+                    if canSkip {
+                        // 裏ボタンの案内(控えめに点滅)
+                        Text("リールを叩くと即告知")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.35 + 0.3 * sin(t * 5)))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .padding(.trailing, 10)
+                    }
                 }
             }
         }
@@ -305,6 +350,7 @@ private struct PayoutDisplay: View {
 
 private struct ChaseLights: View {
     let mood: SlotGame.Mood
+    let theme: CabinetTheme
     let now: Date
 
     var body: some View {
@@ -314,16 +360,20 @@ private struct ChaseLights: View {
             let speed: Double = {
                 switch mood {
                 case .normal: return 4
+                case .zone: return 10
                 case .reach: return 18
                 case .bonus: return 14
                 case .rush: return 22
+                case .superRush: return 34
+                case .freeze: return 0
                 }
             }()
             ForEach(0..<count, id: \.self) { i in
                 let point = perimeterPoint(Double(i) / Double(count), in: geo.size)
                 let raw = (Double(i) - t * speed).truncatingRemainder(dividingBy: 6)
                 let phase = raw < 0 ? raw + 6 : raw
-                let on = phase < 1.2 || (mood == .bonus && i % 2 == Int(t * 6) % 2)
+                let on = mood != .freeze
+                    && (phase < 1.2 || ((mood == .bonus || mood == .superRush) && i % 2 == Int(t * 6) % 2))
                 Circle()
                     .fill(color(for: i, t: t))
                     .frame(width: 6, height: 6)
@@ -337,11 +387,19 @@ private struct ChaseLights: View {
 
     private func color(for i: Int, t: Double) -> Color {
         switch mood {
-        case .normal: return Color(red: 0.8, green: 0.5, blue: 1)
+        case .normal:
+            if theme == .rainbow {
+                return Color(hue: (Double(i) / 36 + t * 0.1).truncatingRemainder(dividingBy: 1),
+                             saturation: 0.8, brightness: 1)
+            }
+            return theme.chase
+        case .zone: return i % 2 == 0 ? .orange : .yellow
         case .reach: return .red
         case .rush: return i % 2 == 0 ? Color(red: 1, green: 0.2, blue: 0.8) : .yellow
-        case .bonus: return Color(hue: (Double(i) / 36 + t * 0.5).truncatingRemainder(dividingBy: 1),
-                                  saturation: 0.9, brightness: 1)
+        case .bonus, .superRush:
+            return Color(hue: (Double(i) / 36 + t * 0.5).truncatingRemainder(dividingBy: 1),
+                         saturation: 0.9, brightness: 1)
+        case .freeze: return .black
         }
     }
 

@@ -16,7 +16,11 @@ struct ReelMotion {
         case holding(start: Date, from: Double, hold: Double)
         /// 粘っていた位置から答えの位置へ動く
         case settling(start: Date, from: Double, to: Double, duration: Double)
+        /// フリーズ演出: ゆっくり逆回転(図柄が下から上へ)
+        case reversing(start: Date, from: Double)
     }
+
+    static let reverseSpeed = 7.0
 
     /// 1 秒に流れるコマ数(実機の 80 回転/分 ≒ 28 コマ/秒くらい)
     static let spinSpeed = 30.0
@@ -79,6 +83,11 @@ struct ReelMotion {
             }
             let b = min(1, (t - duration) / (Self.bounceTime * 1.4))
             return to + Self.bounceDepth * 2.2 * sin(.pi * b) * (1 - b)
+        case .reversing(let start, let from):
+            let t = max(0, now.timeIntervalSince(start))
+            // 0.8 秒かけてじわっと逆向きに加速する
+            let distance = t < 0.8 ? t * t / 1.6 : t - 0.4
+            return from - Self.reverseSpeed * distance
         }
     }
 
@@ -91,6 +100,8 @@ struct ReelMotion {
         case .stopping(let start, _, _, let duration):
             let t = max(0, now.timeIntervalSince(start))
             return t < duration ? Self.spinSpeed * (1 - t / duration) : 0
+        case .reversing:
+            return Self.reverseSpeed
         default:
             return 0
         }
@@ -119,6 +130,24 @@ struct ReelMotion {
         let distance = Double(target) - p
         // ease-out の初速 = 2 * 距離 / 時間 を回転速度に合わせる
         let duration = 2 * distance / Self.spinSpeed
+        state = .stopping(start: now, from: p, to: Double(target), duration: duration)
+        return duration + Self.bounceTime
+    }
+
+    /// フリーズ演出の逆回転を始める
+    mutating func startReverse(at now: Date) {
+        state = .reversing(start: now, from: position(at: now))
+    }
+
+    /// 逆回転しているリールを `center` で止める(図柄は下から上へ流れて止まる)
+    @discardableResult
+    mutating func stopReverse(at now: Date, center: SlotSymbol) -> Double {
+        let p = position(at: now)
+        let target = Int(ceil(p)) - 3
+        overrides[target] = center
+        overrides[target + 1] = nil
+        overrides[target - 1] = nil
+        let duration = 0.35
         state = .stopping(start: now, from: p, to: Double(target), duration: duration)
         return duration + Self.bounceTime
     }

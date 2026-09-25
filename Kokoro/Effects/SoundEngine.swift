@@ -6,6 +6,8 @@ final class SoundEngine {
 
     enum Effect: Hashable {
         case lever
+        /// 違和感: 少し高いレバー音
+        case leverHigh
         case stop
         case reach
         case step(Int)
@@ -24,11 +26,28 @@ final class SoundEngine {
         case cut
         case bonusEnd
         case rushStart
+        case achievement
     }
 
     enum Music: Hashable {
         case bonus
         case rush
+        case superRush
+    }
+
+    private struct MusicKey: Hashable {
+        let music: Music
+        let style: BGMStyle
+    }
+
+    /// BGM の曲調(実績で解放)。変えると次に流すときから反映
+    var bgmStyle: BGMStyle = .standard {
+        didSet {
+            if oldValue != bgmStyle, let music = currentMusic {
+                currentMusic = nil
+                playMusic(music)
+            }
+        }
     }
 
     var isEnabled = true {
@@ -46,7 +65,7 @@ final class SoundEngine {
     private var nextVoice = 0
     private let musicNode = AVAudioPlayerNode()
     private var buffers: [Effect: AVAudioPCMBuffer] = [:]
-    private var musicBuffers: [Music: AVAudioPCMBuffer] = [:]
+    private var musicBuffers: [MusicKey: AVAudioPCMBuffer] = [:]
     private var currentMusic: Music?
     private let musicVolume: Float = 0.5
 
@@ -79,7 +98,7 @@ final class SoundEngine {
 
     /// よく使う音を裏で先に作っておく(最初の 1 回で引っかからないように)。
     func prewarm() {
-        let effects: [Effect] = [.lever, .stop, .reach, .kyuin, .boom, .fanfare, .lose, .coin, .smallWin, .push,
+        let effects: [Effect] = [.lever, .leverHigh, .stop, .reach, .kyuin, .boom, .fanfare, .lose, .coin, .smallWin, .push,
                                  .heartbeat, .cut, .bonusEnd, .rushStart,
                                  .step(0), .step(1), .step(2), .step(3), .step(4), .step(5),
                                  .yokoku(1), .yokoku(2), .yokoku(3), .yokoku(4),
@@ -87,14 +106,15 @@ final class SoundEngine {
         DispatchQueue.global(qos: .userInitiated).async {
             var rendered: [(Effect, [Float])] = []
             for e in effects { rendered.append((e, Self.render(e))) }
-            let bonus = SoundSynth.bgm(transpose: 0, intense: false)
-            let rush = SoundSynth.bgm(transpose: 2, intense: true)
+            let style = BGMStyle.standard
+            let music: [(Music, [Float])] = [Music.bonus, .rush, .superRush].map { ($0, Self.renderMusic($0, style)) }
             DispatchQueue.main.async {
                 for (e, samples) in rendered where self.buffers[e] == nil {
                     self.buffers[e] = self.makeBuffer(samples)
                 }
-                if self.musicBuffers[.bonus] == nil { self.musicBuffers[.bonus] = self.makeBuffer(bonus) }
-                if self.musicBuffers[.rush] == nil { self.musicBuffers[.rush] = self.makeBuffer(rush) }
+                for (m, samples) in music where self.musicBuffers[MusicKey(music: m, style: style)] == nil {
+                    self.musicBuffers[MusicKey(music: m, style: style)] = self.makeBuffer(samples)
+                }
             }
         }
     }
@@ -131,15 +151,13 @@ final class SoundEngine {
             musicNode.volume = musicVolume
             return
         }
+        let key = MusicKey(music: music, style: bgmStyle)
         let buffer: AVAudioPCMBuffer
-        if let cached = musicBuffers[music] {
+        if let cached = musicBuffers[key] {
             buffer = cached
         } else {
-            let samples = music == .bonus
-                ? SoundSynth.bgm(transpose: 0, intense: false)
-                : SoundSynth.bgm(transpose: 2, intense: true)
-            buffer = makeBuffer(samples)
-            musicBuffers[music] = buffer
+            buffer = makeBuffer(Self.renderMusic(music, bgmStyle))
+            musicBuffers[key] = buffer
         }
         musicNode.stop()
         musicNode.volume = musicVolume
@@ -162,9 +180,18 @@ final class SoundEngine {
         return b
     }
 
+    private static func renderMusic(_ music: Music, _ style: BGMStyle) -> [Float] {
+        switch music {
+        case .bonus: return SoundSynth.bgm(transpose: 0, intense: false, style: style)
+        case .rush: return SoundSynth.bgm(transpose: 2, intense: true, style: style)
+        case .superRush: return SoundSynth.bgm(transpose: 5, intense: true, style: style)
+        }
+    }
+
     private static func render(_ effect: Effect) -> [Float] {
         switch effect {
         case .lever: return SoundSynth.lever()
+        case .leverHigh: return SoundSynth.lever(pitch: 1.35)
         case .stop: return SoundSynth.stop()
         case .reach: return SoundSynth.reach()
         case .step(let level): return SoundSynth.step(level)
@@ -182,6 +209,7 @@ final class SoundEngine {
         case .cut: return SoundSynth.cut()
         case .bonusEnd: return SoundSynth.jingle(rising: false)
         case .rushStart: return SoundSynth.jingle(rising: true)
+        case .achievement: return SoundSynth.achievement()
         }
     }
 
